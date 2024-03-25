@@ -90,28 +90,31 @@ static void write_register(uint8_t reg, uint8_t data) {
     spi_write_blocking(spi0, buf, 2);
     cs_deselect();
 }
-static void write_register_3bytes(uint8_t reg, uint8_t b1, uint8_t b2, uint8_t b3) {
+static void write_register_5bytes(uint8_t reg, uint8_t b1, uint8_t b2, uint8_t b3, uint8_t b4, uint8_t b5) {
 	// Used for the address register (TX_ADDR, 0x10)
-    uint8_t buf[4];
+    uint8_t buf[6];
     buf[0] = reg | 0x20; // bitwise OR mask ; right nibble will be unaffected, left nibble will get prefix 001X
     buf[1] = b1;
     buf[2] = b2;
     buf[3] = b3;
+    buf[4] = b4;
+    buf[5] = b5;
     cs_select();
-    spi_write_blocking(spi0, buf, 4);
+    spi_write_blocking(spi0, buf, 6);
     cs_deselect();
 }
 
 static void write_tx_payload(uint8_t *payload) {
     uint8_t writebuf[9];
-    //writebuf[0] = 0b10100000;
-    writebuf[0] = 0b10110000; // trying the force-no-ack, in case thats the issue?
+    writebuf[0] = 0b10100000;
+    //writebuf[0] = 0b10110000; // trying the force-no-ack, in case thats the issue?
     memcpy(&writebuf[1],&payload[0],8);
 
     cs_select();
     spi_write_blocking(spi0, writebuf, 9);
     cs_deselect();
-}
+    printf("\nDEBUG: here's what the tx writebuf looks like... %b,\n%b,%b,%b,%b,\n%b,%b,%b,%b", writebuf[0],writebuf[1],writebuf[2],writebuf[3],writebuf[4],writebuf[5],writebuf[6],writebuf[7],writebuf[8]);
+}	
 
 static void read_register(uint8_t reg, uint8_t *buf) {
     cs_select();
@@ -144,7 +147,7 @@ void setup_registers() {
 	// 04 is autoretransmit. disable
 	write_register(0x04, 0b00000000);
 	// 05 is Channel. do more work here later
-	write_register(0x05, 0b00000111);
+	write_register(0x05, 0b00011111);
 	// 06 is "Rf setup register" 
 	// ** sets data rate. trying 1mbps first (middle)
 	// ** sets tx power. trying lowest first
@@ -155,7 +158,7 @@ void setup_registers() {
 	// 09 read only
 	// 0A..0F are RX_ADDR for pipes. ** may need to set up pipe0 for retransmit... even though it is turned off.
 	// 10 : TX_ADDR
-	write_register_3bytes(0x10, 0x4A, 0x41, 0x4B);
+	write_register_5bytes(0x10, 0x4A, 0x41, 0x4B, 0x4B, 0x4B);
 	// 11..16 are for RX payload tracking
 	// 17 is read-only.
 	// (reserved block for payloads...)
@@ -175,7 +178,7 @@ int main() {
 	gpio_init(_pinLED);
 	gpio_set_dir(_pinLED, GPIO_OUT);
 
-	spi_init(spi0, 10'000 * 1000); // try the full 10MHz? datasheet says itll be compliant
+	spi_init(spi0, 4'000 * 1000); // try the full 10MHz? datasheet says itll be compliant
 	gpio_set_function(2, GPIO_FUNC_SPI);
     gpio_set_function(3, GPIO_FUNC_SPI);
     gpio_set_function(4, GPIO_FUNC_SPI);
@@ -186,17 +189,18 @@ int main() {
     gpio_init(CE_PIN);
     gpio_set_dir(CE_PIN, GPIO_OUT);
 
-
+    sleep_ms(1500);
     gpio_put(CSN_PIN, 1);
-
-		
-	gpio_put(_pinLED, 0);
-	sleep_ms(5000);
+	memory_dump_to_screen();
 	gpio_put(_pinLED, 1);
-    memory_dump_to_screen();
-    sleep_ms(1000);
+	sleep_ms(5000);
+	
    	setup_registers();
    	memory_dump_to_screen();
+   	gpio_put(_pinLED, 0);
+   	sleep_ms(5000);
+
+   	gpio_put(CSN_PIN, 0);
 
    	GCReport dummyreport = buttonsToGCReport();
    	uint8_t reportcopy[8];
@@ -205,24 +209,7 @@ int main() {
    	// power up. ------------------
    	write_register(0x00, 0b01011010);
 
-	// *** send a packet to the nrf.
-	uint8_t status2;
-	read_register(0x17, &status2);
-	printf("\n  before write_payload: fifostatus is %02x", status2);
-	write_tx_payload(reportcopy);
-	read_register(0x17, &status2);
-	printf("\n  after write_payload: fifostatus is %02x", status2);
-
-	gpio_put(CE_PIN, 1);
-	sleep_us(500); // datasheet says 10 microseconds is minimum
-	gpio_put(CE_PIN, 0);
-	// transmission happens...
-	// check the status register repeatedly to see exactly when the packet went out.
-	sleep_ms(1000);
-	read_register(0x17, &status2);
-	printf("\n  2sec after chip enable: fifostatus is %02x", status2);
-
-
+   	uint8_t pcount = 0;
    	// first draft at main tx loop.
    	while (true)
    	{
@@ -236,32 +223,50 @@ int main() {
    		while (true)
    		{
    			uint8_t status1;
-   			uint8_t NOP = 0xFF;
+   			uint8_t NOP = 0xFF; 
    			cs_select();
    			spi_write_read_blocking(spi0, &NOP, &status1, 1);
 			cs_deselect();
    			if ((status1 & 0x20) == 0x20) 
    			{
-   				printf("\n---SENT ONE---");
+   				//printf("\n---SENT ONE---");
    				write_register(0x07, 0b01110000);
    				break;
    			} 
-   			else {failures++;}
+   			else 
+   			{
+			failures++;
    			printf("\nfailed? %d'th attempt", failures);
+   			uint8_t status_reg;
+   			read_register(0x07, &status_reg);
+   			printf("\n--status reg says %08b", status_reg);
+   			uint8_t txfifo_reg;
+   			read_register(0x17, &txfifo_reg);
+   			printf("\n--txfifo reg says %08b", txfifo_reg);
    			sleep_us(15);
+   			printf("\nRETRANSMITTING...");
+   			gpio_put(CE_PIN, 1);
+			sleep_us(15); // datasheet says 10 microseconds is minimum
+			gpio_put(CE_PIN, 0);
+			}
+
    		}
 
    		uint64_t elapsed = time_us_64() - t1;
    		printf("\t\tflag set (transmission succeeded) after %llu microseconds.", elapsed);
 
-
    		// just delay any extra time. aiming for 1khz packet rate
    		uint64_t t_delay = (t1 + (uint64_t) 1000) - time_us_64();
    		printf("\n%llu ... ", t_delay);
    		sleep_us(t_delay);
+   		// dummy transmission test pattern.
+   		pcount++;
+   		dummyreport.a = pcount < 128;
+   		dummyreport.analogL = pcount;
+
+	   	memcpy(reportcopy , &dummyreport , 8);
 
    	}
-
 
 	//enterMode(_pinTX, buttonsToGCReport);
 }

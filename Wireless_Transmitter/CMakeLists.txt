@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 
 include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)
-include(lib/RF24/CMakeLists.txt)
-include(lib/RF24Network/CMakeLists.txt)
-include(lib/RF24Mesh/CMakeLists.txt)
 
 project(wireless_tx CXX C ASM)
 
@@ -11,11 +8,13 @@ pico_sdk_init()
 
 include_directories(
 	include
+    common
 	)
 
 add_executable(wireless_tx
 	src/joybus.cpp
-	src/main.cpp
+	src/main2.cpp
+    src/storage.cpp
 	)
 
 pico_generate_pio_header(wireless_tx ${CMAKE_CURRENT_LIST_DIR}/pio/joybus.pio)

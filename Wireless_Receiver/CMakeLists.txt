@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 
 include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)
-include(lib/RF24/CMakeLists.txt)
-include(lib/RF24Network/CMakeLists.txt)
-include(lib/RF24Mesh/CMakeLists.txt)
 
 project(wireless_attempt CXX C ASM)
 
